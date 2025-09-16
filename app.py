@@ -1,4 +1,4 @@
-rom flask import Flask, request, jsonify
+from flask import Flask, request, jsonify # změna pro restart
 from flask_cors import CORS
 import os
 import json
