@@ -1,9 +1,12 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
 import json
 from datetime import datetime
 
 app = Flask(__name__)
+CORS(app)  # povolí přístup z React frontendu (localhost:3000)
+
 DATA_DIR = "quizzes"
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -38,6 +41,25 @@ def get_quiz():
         quiz = json.load(f)
 
     return jsonify(quiz), 200
+
+@app.route("/get_all_quizzes", methods=["GET"])
+def get_all_quizzes():
+    quizzes = []
+    try:
+        for filename in os.listdir(DATA_DIR):
+            if filename.endswith(".json"):
+                filepath = os.path.join(DATA_DIR, filename)
+                with open(filepath, "r", encoding="utf-8") as f:
+                    quiz_data = json.load(f)
+                    quizzes.append({
+                        "id": filename[:-5],
+                        "title": quiz_data.get("title", "Bez názvu"),
+                        "grade": quiz_data.get("grade", ""),
+                        "question_count": len(quiz_data.get("questions", []))
+                    })
+        return jsonify(quizzes), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
