@@ -1,9 +1,12 @@
-from flask import Flask, request, jsonify
+rom flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
 import json
 from datetime import datetime
 
 app = Flask(__name__)
+CORS(app)  # ← DŮLEŽITÉ! Povolení CORS
+
 DATA_DIR = "quizzes"
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -38,6 +41,22 @@ def get_quiz():
         quiz = json.load(f)
 
     return jsonify(quiz), 200
+
+@app.route("/get_all_quizzes")
+def get_all_quizzes():
+    quizzes = []
+    for filename in os.listdir(DATA_DIR):
+        if filename.endswith(".json"):
+            filepath = os.path.join(DATA_DIR, filename)
+            with open(filepath, "r", encoding="utf-8") as f:
+                quiz = json.load(f)
+                quiz_id = filename[:-5]
+                quizzes.append({
+                    "id": quiz_id,
+                    "title": quiz.get("title", f"Untitled ({quiz_id})")
+                })
+
+    return jsonify(quizzes), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
