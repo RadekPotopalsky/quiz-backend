@@ -7,9 +7,9 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 app = Flask(__name__)
-CORS(app)  # Povolení CORS
+CORS(app)  # Povolení CORS pro frontend
 
-# Připojení k databázi
+# Připojení k databázi (Render → Environment → DATABASE_URL)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
@@ -20,6 +20,8 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
+
+    # Users
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -27,6 +29,8 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
+    # Quizzes
     cur.execute("""
         CREATE TABLE IF NOT EXISTS quizzes (
             id VARCHAR(50) PRIMARY KEY,
@@ -35,6 +39,8 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
+    # Results
     cur.execute("""
         CREATE TABLE IF NOT EXISTS results (
             id SERIAL PRIMARY KEY,
@@ -47,6 +53,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
     conn.commit()
     cur.close()
     conn.close()
@@ -57,7 +64,7 @@ init_db()
 def index():
     return jsonify({"message": "Quiz API is running with PostgreSQL!"})
 
-# Vytvoření kvízu
+# ===== Kvízy =====
 @app.route("/create_quiz", methods=["POST"])
 def create_quiz():
     data = request.json
@@ -80,7 +87,6 @@ def create_quiz():
 
     return jsonify({"message": "Quiz saved successfully", "id": quiz_id}), 200
 
-# Získání všech kvízů
 @app.route("/get_all_quizzes")
 def get_all_quizzes():
     conn = get_db_connection()
@@ -91,7 +97,6 @@ def get_all_quizzes():
     conn.close()
     return jsonify(quizzes), 200
 
-# Získání jednoho kvízu
 @app.route("/get_quiz")
 def get_quiz():
     quiz_id = request.args.get("id")
@@ -108,9 +113,106 @@ def get_quiz():
     if not quiz:
         return jsonify({"error": "Quiz not found"}), 404
 
-    # JSON pole questions převedeme zpět
-    quiz["questions"] = quiz["questions"]
     return jsonify(quiz), 200
+
+# ===== Vyhodnocení =====
+@app.route("/submit_answers", methods=["POST"])
+def submit_answers():
+    """
+    Request JSON:
+    {
+      "quiz_id": "20250923104530",
+      "answers": { "0": 1, "1": 2, "2": "Slované" },
+      "user_name": "Radek"  # volitelné
+    }
+    """
+    data = request.json
+    quiz_id = data.get("quiz_id")
+    answers = data.get("answers")
+    user_name = data.get("user_name", "Anonym")
+
+    if not quiz_id or not answers:
+        return jsonify({"error": "Missing quiz_id or answers"}), 400
+
+    # Načti kvíz
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT questions FROM quizzes WHERE id = %s", (quiz_id,))
+    quiz = cur.fetchone()
+    if not quiz:
+        cur.close()
+        conn.close()
+        return jsonify({"error": "Quiz not found"}), 404
+
+    questions = quiz["questions"]
+
+    # Pokud uživatel neexistuje, vlož ho
+    cur.execute("SELECT id FROM users WHERE username = %s", (user_name,))
+    user = cur.fetchone()
+    if user:
+        user_id = user["id"]
+    else:
+        cur.execute("INSERT INTO users (username) VALUES (%s) RETURNING id", (user_name,))
+        user_id = cur.fetchone()["id"]
+
+    # Vyhodnocení
+    score = 0
+    total = len(questions)
+    details = []
+
+    for i, q in enumerate(questions):
+        correct = q.get("correct")
+        opts = q.get("options", [])
+        correct_text = None
+
+        if isinstance(correct, int) and 0 <= correct < len(opts):
+            correct_text = opts[correct]
+        elif isinstance(correct, str):
+            correct_text = correct
+
+        user_ans = answers.get(str(i)) or answers.get(i)
+        user_text = None
+        if isinstance(user_ans, int) and 0 <= user_ans < len(opts):
+            user_text = opts[user_ans]
+        elif isinstance(user_ans, str):
+            user_text = user_ans
+
+        is_correct = (user_text == correct_text)
+        if is_correct:
+            score += 1
+
+        details.append({
+            "index": i,
+            "question": q.get("question"),
+            "options": opts,
+            "correct": correct_text,
+            "user_answer": user_text,
+            "is_correct": is_correct
+        })
+
+    percentage = round((score / total) * 100, 2) if total > 0 else 0.0
+
+    # Ulož do results
+    cur.execute("""
+        INSERT INTO results (quiz_id, user_id, score, total, percentage, answers)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id, created_at
+    """, (quiz_id, user_id, score, total, percentage, json.dumps(details)))
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify({
+        "result_id": result["id"],
+        "quiz_id": quiz_id,
+        "user_name": user_name,
+        "score": score,
+        "total": total,
+        "percentage": percentage,
+        "created_at": result["created_at"],
+        "details": details
+    }), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
