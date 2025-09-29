@@ -21,15 +21,6 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Users
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(100) DEFAULT 'Anonym',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
     # Quizzes
     cur.execute("""
         CREATE TABLE IF NOT EXISTS quizzes (
@@ -40,7 +31,7 @@ def init_db():
         );
     """)
 
-    # Results
+    # Results (zatím bez user_id)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS results (
             id SERIAL PRIMARY KEY,
@@ -51,20 +42,6 @@ def init_db():
             answers JSONB NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-    """)
-
-    # Přidáme user_id sloupec pokud neexistuje
-    cur.execute("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='results' AND column_name='user_id'
-            ) THEN
-                ALTER TABLE results
-                ADD COLUMN user_id INT REFERENCES users(id) ON DELETE SET NULL;
-            END IF;
-        END$$;
     """)
 
     conn.commit()
@@ -134,15 +111,15 @@ def submit_answers():
     """
     Request JSON:
     {
-      "quiz_id": "20250923104530",
+      "quiz_id": "20250925121046",
       "answers": { "0": 1, "1": 2, "2": "Slované" },
-      "user_name": "Radek"  # volitelné
+      "user_name": "Radek"  # volitelné (zatím se neukládá)
     }
     """
     data = request.json
     quiz_id = data.get("quiz_id")
     answers = data.get("answers")
-    user_name = data.get("user_name", "Anonym")
+    user_name = data.get("user_name", "Anonym")  # jen pro zobrazení
 
     if not quiz_id or not answers:
         return jsonify({"error": "Missing quiz_id or answers"}), 400
@@ -158,15 +135,6 @@ def submit_answers():
         return jsonify({"error": "Quiz not found"}), 404
 
     questions = quiz["questions"]
-
-    # Pokud uživatel neexistuje, vlož ho
-    cur.execute("SELECT id FROM users WHERE username = %s", (user_name,))
-    user = cur.fetchone()
-    if user:
-        user_id = user["id"]
-    else:
-        cur.execute("INSERT INTO users (username) VALUES (%s) RETURNING id", (user_name,))
-        user_id = cur.fetchone()["id"]
 
     # Vyhodnocení
     score = 0
@@ -205,12 +173,12 @@ def submit_answers():
 
     percentage = round((score / total) * 100, 2) if total > 0 else 0.0
 
-    # Ulož do results
+    # Ulož do results (bez user_id)
     cur.execute("""
-        INSERT INTO results (quiz_id, user_id, score, total, percentage, answers)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO results (quiz_id, score, total, percentage, answers)
+        VALUES (%s, %s, %s, %s, %s)
         RETURNING id, created_at
-    """, (quiz_id, user_id, score, total, percentage, json.dumps(details)))
+    """, (quiz_id, score, total, percentage, json.dumps(details)))
     result = cur.fetchone()
     conn.commit()
     cur.close()
