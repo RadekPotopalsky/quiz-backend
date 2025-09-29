@@ -45,13 +45,26 @@ def init_db():
         CREATE TABLE IF NOT EXISTS results (
             id SERIAL PRIMARY KEY,
             quiz_id VARCHAR(50) REFERENCES quizzes(id) ON DELETE CASCADE,
-            user_id INT REFERENCES users(id) ON DELETE SET NULL,
             score INT NOT NULL,
             total INT NOT NULL,
             percentage DECIMAL(5,2) NOT NULL,
             answers JSONB NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+    """)
+
+    # Přidáme user_id sloupec pokud neexistuje
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='results' AND column_name='user_id'
+            ) THEN
+                ALTER TABLE results
+                ADD COLUMN user_id INT REFERENCES users(id) ON DELETE SET NULL;
+            END IF;
+        END$$;
     """)
 
     conn.commit()
