@@ -72,6 +72,13 @@ def create_quiz():
     if not data or "title" not in data or "questions" not in data:
         return jsonify({"error": "Invalid format"}), 400
 
+    # validace otázek
+    for q in data["questions"]:
+        if "question" not in q or "options" not in q or "correct" not in q:
+            return jsonify({"error": "Each question must have 'question', 'options', and 'correct'"}), 400
+        if not isinstance(q["correct"], (int, str)):
+            return jsonify({"error": "'correct' must be index (int) or text (str)"}), 400
+
     quiz_id = datetime.now().strftime("%Y%m%d%H%M%S")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     data["title"] = f"{timestamp} - {data['title']}"
@@ -116,17 +123,28 @@ def get_quiz():
 
     return jsonify(quiz), 200
 
+# ===== Debug – zobraz uložený JSON kvízu =====
+@app.route("/debug_quiz")
+def debug_quiz():
+    quiz_id = request.args.get("id")
+    if not quiz_id:
+        return jsonify({"error": "Missing id parameter"}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT questions FROM quizzes WHERE id = %s", (quiz_id,))
+    quiz = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not quiz:
+        return jsonify({"error": "Quiz not found"}), 404
+
+    return jsonify(quiz["questions"]), 200
+
 # ===== Vyhodnocení =====
 @app.route("/submit_answers", methods=["POST"])
 def submit_answers():
-    """
-    Request JSON:
-    {
-      "quiz_id": "20250923104530",
-      "answers": { "0": 1, "1": 2, "2": "Slované" },
-      "user_name": "Radek"  # volitelné
-    }
-    """
     data = request.json
     quiz_id = data.get("quiz_id")
     answers = data.get("answers")
