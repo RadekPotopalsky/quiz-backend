@@ -82,28 +82,30 @@ def create_quiz():
 
     return jsonify({"message": "Quiz saved successfully", "id": quiz_id}), 200
 
-@app.route('/get_all_quizzes', methods=['GET'])
+@app.route("/get_all_quizzes")
 def get_all_quizzes():
-    conn = sqlite3.connect('quiz.db')
-    c = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
 
-    c.execute("SELECT id, title, created_at FROM quizzes ORDER BY created_at DESC")
-    quizzes = c.fetchall()
+    cur.execute("SELECT id, title, created_at FROM quizzes ORDER BY created_at DESC")
+    quizzes = cur.fetchall()
 
     result = []
     for q in quizzes:
-        quiz_id, title, created_at = q
+        quiz_id = q["id"]
+        title = q["title"]
+        created_at = q["created_at"]
 
         # počet spuštění
-        c.execute("SELECT COUNT(*) FROM results WHERE quiz_id = ?", (quiz_id,))
-        attempts = c.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM results WHERE quiz_id = %s", (quiz_id,))
+        attempts = cur.fetchone()["count"]
 
         # průměrná úspěšnost
-        c.execute("SELECT AVG(percentage) FROM results WHERE quiz_id = ?", (quiz_id,))
-        avg_success = c.fetchone()[0] or 0
+        cur.execute("SELECT AVG(percentage) FROM results WHERE quiz_id = %s", (quiz_id,))
+        avg_success = cur.fetchone()["avg"] or 0
 
-        # převedeme datum jen na YYYY-MM-DD
-        created_date = created_at.split(" ")[0] if created_at else ""
+        # převedeme datum na YYYY-MM-DD
+        created_date = created_at.strftime("%Y-%m-%d") if created_at else ""
 
         result.append({
             "id": quiz_id,
@@ -113,9 +115,9 @@ def get_all_quizzes():
             "avg_success": round(avg_success, 2)
         })
 
+    cur.close()
     conn.close()
-    return jsonify(result)
-
+    return jsonify(result), 200
 @app.route("/get_quiz")
 def get_quiz():
     quiz_id = request.args.get("id")
