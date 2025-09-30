@@ -7,9 +7,9 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Povolení CORS pro frontend
 
-# Připojení k databázi
+# Připojení k databázi (Render → Environment → DATABASE_URL)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
@@ -46,10 +46,9 @@ def init_db():
             id SERIAL PRIMARY KEY,
             quiz_id VARCHAR(50) REFERENCES quizzes(id) ON DELETE CASCADE,
             user_id INT REFERENCES users(id) ON DELETE SET NULL,
-            user_name TEXT,
+            user_name VARCHAR(100),
             score INT NOT NULL,
             total INT NOT NULL,
-            percentage DECIMAL(5,2) NOT NULL,
             answers JSONB NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -59,7 +58,31 @@ def init_db():
     cur.close()
     conn.close()
 
+# Migrace databáze – přidání chybějících sloupců
+def migrate_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Přidáme sloupec percentage, pokud ještě neexistuje
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 
+                FROM information_schema.columns 
+                WHERE table_name='results' AND column_name='percentage'
+            ) THEN
+                ALTER TABLE results ADD COLUMN percentage DECIMAL(5,2);
+            END IF;
+        END
+        $$;
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# Spustíme inicializaci a migraci
 init_db()
+migrate_db()
 
 @app.route("/")
 def index():
@@ -120,102 +143,92 @@ def get_quiz():
 @app.route("/submit_answers", methods=["POST"])
 def submit_answers():
     data = request.json
-    try:
-        quiz_id = data.get("quiz_id")
-        answers = data.get("answers")
-        user_name = data.get("user_name", "Anonym")
+    quiz_id = data.get("quiz_id")
+    answers = data.get("answers")
+    user_name = data.get("user_name", "Anonym")
 
-        if not quiz_id or not answers:
-            return jsonify({"error": "Missing quiz_id or answers"}), 400
+    if not quiz_id or not answers:
+        return jsonify({"error": "Missing quiz_id or answers"}), 400
 
-        # Načti kvíz
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT questions FROM quizzes WHERE id = %s", (quiz_id,))
-        quiz = cur.fetchone()
-        if not quiz:
-            cur.close()
-            conn.close()
-            return jsonify({"error": "Quiz not found"}), 404
+    # Načti kvíz
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT questions FROM quizzes WHERE id = %s", (quiz_id,))
+    quiz = cur.fetchone()
+    if not quiz:
+        cur.close()
+        conn.close()
+        return jsonify({"error": "Quiz not found"}), 404
 
-        questions = quiz["questions"]
+    questions = quiz["questions"]
 
-        # Pokud uživatel neexistuje, vlož ho
-        cur.execute("SELECT id FROM users WHERE username = %s", (user_name,))
-        user = cur.fetchone()
-        if user:
-            user_id = user["id"]
-        else:
-            cur.execute("INSERT INTO users (username) VALUES (%s) RETURNING id", (user_name,))
-            user_id = cur.fetchone()["id"]
+    # Pokud uživatel neexistuje, vlož ho
+    cur.execute("SELECT id FROM users WHERE username = %s", (user_name,))
+    user = cur.fetchone()
+    if user:
+        user_id = user["id"]
+    else:
+        cur.execute("INSERT INTO users (username) VALUES (%s) RETURNING id", (user_name,))
+        user_id = cur.fetchone()["id"]
 
-        # Vyhodnocení
-        score = 0
-        total = len(questions)
-        details = []
+    # Vyhodnocení
+    score = 0
+    total = len(questions)
+    details = []
 
-        for i, q in enumerate(questions):
-            correct = q.get("correct")
-            opts = q.get("options", [])
-            correct_text = None
+    for i, q in enumerate(questions):
+        correct = q.get("correct")
+        opts = q.get("options", [])
+        correct_text = None
 
-            if isinstance(correct, int) and 0 <= correct < len(opts):
-                correct_text = opts[correct]
-            elif isinstance(correct, str):
-                correct_text = correct
+        if isinstance(correct, int) and 0 <= correct < len(opts):
+            correct_text = opts[correct]
+        elif isinstance(correct, str):
+            correct_text = correct
 
-            user_ans = answers.get(str(i)) or answers.get(i)
-            user_text = None
-            if isinstance(user_ans, int) and 0 <= user_ans < len(opts):
-                user_text = opts[user_ans]
-            elif isinstance(user_ans, str):
-                user_text = user_ans
+        user_ans = answers.get(str(i)) or answers.get(i)
+        user_text = None
+        if isinstance(user_ans, int) and 0 <= user_ans < len(opts):
+            user_text = opts[user_ans]
+        elif isinstance(user_ans, str):
+            user_text = user_ans
 
-            is_correct = (user_text == correct_text)
-            if is_correct:
-                score += 1
+        is_correct = (user_text == correct_text)
+        if is_correct:
+            score += 1
 
-            details.append({
-                "index": i,
-                "question": q.get("question"),
-                "options": opts,
-                "correct": correct_text,
-                "user_answer": user_text,
-                "is_correct": is_correct
-            })
+        details.append({
+            "index": i,
+            "question": q.get("question"),
+            "options": opts,
+            "correct": correct_text,
+            "user_answer": user_text,
+            "is_correct": is_correct
+        })
 
-        percentage = round((score / total) * 100, 2) if total > 0 else 0.0
+    percentage = round((score / total) * 100, 2) if total > 0 else 0.0
 
-        # Ulož do results
-        try:
-            cur.execute("""
-                INSERT INTO results (quiz_id, user_id, user_name, score, total, percentage, answers)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, created_at
-            """, (quiz_id, user_id, user_name, score, total, percentage, json.dumps(details)))
-            result = cur.fetchone()
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            return jsonify({"error": "DB insert failed", "details": str(e)}), 500
-        finally:
-            cur.close()
-            conn.close()
+    # Ulož do results
+    cur.execute("""
+        INSERT INTO results (quiz_id, user_id, user_name, score, total, percentage, answers)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id, created_at
+    """, (quiz_id, user_id, user_name, score, total, percentage, json.dumps(details)))
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
 
-        return jsonify({
-            "result_id": result["id"],
-            "quiz_id": quiz_id,
-            "user_name": user_name,
-            "score": score,
-            "total": total,
-            "percentage": percentage,
-            "created_at": result["created_at"],
-            "details": details
-        }), 200
-
-    except Exception as e:
-        return jsonify({"error": "Unexpected error", "details": str(e)}), 500
-
+    return jsonify({
+        "result_id": result["id"],
+        "quiz_id": quiz_id,
+        "user_name": user_name,
+        "score": score,
+        "total": total,
+        "percentage": percentage,
+        "created_at": result["created_at"],
+        "details": details
+    }), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
