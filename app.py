@@ -208,21 +208,28 @@ def submit_answers():
     }), 200
 
 # ===== Výsledky =====
-@app.route("/get_results", methods=["GET"])
+@app.route("/get_results")
 def get_results():
-    user_name = request.args.get("user_name")  # volitelné filtrování
+    user_name = request.args.get("user_name")
 
     conn = get_db_connection()
     cur = conn.cursor()
 
     if user_name:
         cur.execute("""
-            SELECT * FROM results
-            WHERE user_name = %s
-            ORDER BY created_at DESC
+            SELECT r.*, q.title as quiz_title
+            FROM results r
+            JOIN quizzes q ON r.quiz_id = q.id
+            WHERE r.user_name = %s
+            ORDER BY r.created_at DESC
         """, (user_name,))
     else:
-        cur.execute("SELECT * FROM results ORDER BY created_at DESC")
+        cur.execute("""
+            SELECT r.*, q.title as quiz_title
+            FROM results r
+            JOIN quizzes q ON r.quiz_id = q.id
+            ORDER BY r.created_at DESC
+        """)
 
     results = cur.fetchall()
     cur.close()
