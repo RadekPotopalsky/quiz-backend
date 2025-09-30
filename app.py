@@ -7,21 +7,19 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 app = Flask(__name__)
-CORS(app)  # Povolení CORS pro frontend
+CORS(app)
 
-# Připojení k databázi (Render → Environment → DATABASE_URL)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
-# Inicializace tabulek
+# ===== Inicializace tabulek =====
 def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Users
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -30,7 +28,6 @@ def init_db():
         );
     """)
 
-    # Quizzes
     cur.execute("""
         CREATE TABLE IF NOT EXISTS quizzes (
             id VARCHAR(50) PRIMARY KEY,
@@ -40,7 +37,6 @@ def init_db():
         );
     """)
 
-    # Results
     cur.execute("""
         CREATE TABLE IF NOT EXISTS results (
             id SERIAL PRIMARY KEY,
@@ -127,10 +123,9 @@ def submit_answers():
     if not quiz_id or not answers:
         return jsonify({"error": "Missing quiz_id or answers"}), 400
 
-    # Načti kvíz
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT questions FROM quizzes WHERE id = %s", (quiz_id,))
+    cur.execute("SELECT questions, title FROM quizzes WHERE id = %s", (quiz_id,))
     quiz = cur.fetchone()
     if not quiz:
         cur.close()
@@ -138,8 +133,8 @@ def submit_answers():
         return jsonify({"error": "Quiz not found"}), 404
 
     questions = quiz["questions"]
+    quiz_title = quiz["title"]
 
-    # Pokud uživatel neexistuje, vlož ho
     cur.execute("SELECT id FROM users WHERE username = %s", (user_name,))
     user = cur.fetchone()
     if user:
@@ -148,7 +143,6 @@ def submit_answers():
         cur.execute("INSERT INTO users (username) VALUES (%s) RETURNING id", (user_name,))
         user_id = cur.fetchone()["id"]
 
-    # Vyhodnocení
     score = 0
     total = len(questions)
     details = []
@@ -185,7 +179,6 @@ def submit_answers():
 
     percentage = round((score / total) * 100, 2) if total > 0 else 0.0
 
-    # Ulož do results
     cur.execute("""
         INSERT INTO results (quiz_id, user_id, user_name, score, total, percentage, answers)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -199,6 +192,7 @@ def submit_answers():
     return jsonify({
         "result_id": result["id"],
         "quiz_id": quiz_id,
+        "quiz_title": quiz_title,
         "user_name": user_name,
         "score": score,
         "total": total,
@@ -207,35 +201,43 @@ def submit_answers():
         "details": details
     }), 200
 
-# ===== Výsledky =====
 @app.route("/get_results")
 def get_results():
-    user_name = request.args.get("user_name")
-
     conn = get_db_connection()
     cur = conn.cursor()
-
-    if user_name:
-        cur.execute("""
-            SELECT r.*, q.title as quiz_title
-            FROM results r
-            JOIN quizzes q ON r.quiz_id = q.id
-            WHERE r.user_name = %s
-            ORDER BY r.created_at DESC
-        """, (user_name,))
-    else:
-        cur.execute("""
-            SELECT r.*, q.title as quiz_title
-            FROM results r
-            JOIN quizzes q ON r.quiz_id = q.id
-            ORDER BY r.created_at DESC
-        """)
-
+    cur.execute("""
+        SELECT r.*, q.title AS quiz_title
+        FROM results r
+        LEFT JOIN quizzes q ON r.quiz_id = q.id
+        ORDER BY r.created_at DESC
+    """)
     results = cur.fetchall()
     cur.close()
     conn.close()
-
     return jsonify(results), 200
+
+@app.route("/get_result")
+def get_result():
+    result_id = request.args.get("id")
+    if not result_id:
+        return jsonify({"error": "Missing id"}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT r.*, q.title AS quiz_title
+        FROM results r
+        LEFT JOIN quizzes q ON r.quiz_id = q.id
+        WHERE r.id = %s
+    """, (result_id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not result:
+        return jsonify({"error": "Result not found"}), 404
+
+    return jsonify(result), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
