@@ -49,6 +49,7 @@ def init_db():
             user_name VARCHAR(100),
             score INT NOT NULL,
             total INT NOT NULL,
+            percentage DECIMAL(5,2) NOT NULL,
             answers JSONB NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -58,31 +59,7 @@ def init_db():
     cur.close()
     conn.close()
 
-# Migrace databáze – přidání chybějících sloupců
-def migrate_db():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    # Přidáme sloupec percentage, pokud ještě neexistuje
-    cur.execute("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 
-                FROM information_schema.columns 
-                WHERE table_name='results' AND column_name='percentage'
-            ) THEN
-                ALTER TABLE results ADD COLUMN percentage DECIMAL(5,2);
-            END IF;
-        END
-        $$;
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
-
-# Spustíme inicializaci a migraci
 init_db()
-migrate_db()
 
 @app.route("/")
 def index():
@@ -142,6 +119,14 @@ def get_quiz():
 # ===== Vyhodnocení =====
 @app.route("/submit_answers", methods=["POST"])
 def submit_answers():
+    """
+    Request JSON:
+    {
+      "quiz_id": "20250923104530",
+      "answers": { "0": 1, "1": 2, "2": "Slované" },
+      "user_name": "Radek"  # volitelné
+    }
+    """
     data = request.json
     quiz_id = data.get("quiz_id")
     answers = data.get("answers")
