@@ -5,7 +5,7 @@ import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
-from zoneinfo import ZoneInfo  # ← používáme místo pytz
+from zoneinfo import ZoneInfo  # používáme vestavěné
 
 app = Flask(__name__)
 CORS(app)
@@ -234,6 +234,26 @@ def get_results():
         LEFT JOIN quizzes q ON r.quiz_id = q.id
         ORDER BY r.created_at DESC
     """)
+    results = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify(results), 200
+
+@app.route("/get_results_by_quiz")
+def get_results_by_quiz():
+    quiz_id = request.args.get("quiz_id")
+    if not quiz_id:
+        return jsonify({"error": "Missing quiz_id"}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT r.*, q.title AS quiz_title
+        FROM results r
+        LEFT JOIN quizzes q ON r.quiz_id = q.id
+        WHERE r.quiz_id = %s
+        ORDER BY r.created_at DESC
+    """, (quiz_id,))
     results = cur.fetchall()
     cur.close()
     conn.close()
