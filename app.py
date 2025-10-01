@@ -127,6 +127,26 @@ def get_quiz():
 
     return jsonify(quiz), 200
 
+# ===== Delete kvíz =====
+@app.route("/delete_quiz", methods=["DELETE"])
+def delete_quiz():
+    quiz_id = request.args.get("id")
+    if not quiz_id:
+        return jsonify({"error": "Missing id parameter"}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM quizzes WHERE id = %s RETURNING id", (quiz_id,))
+    deleted = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    if not deleted:
+        return jsonify({"error": "Quiz not found"}), 404
+
+    return jsonify({"message": "Quiz deleted successfully", "id": quiz_id}), 200
+
 # ===== Vyhodnocení =====
 @app.route("/submit_answers", methods=["POST"])
 def submit_answers():
