@@ -5,6 +5,7 @@ import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
+from zoneinfo import ZoneInfo  # ← používáme místo pytz
 
 app = Flask(__name__)
 CORS(app)
@@ -86,10 +87,26 @@ def create_quiz():
 def get_all_quizzes():
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, title, created_at FROM quizzes ORDER BY created_at DESC")
+    cur.execute("""
+        SELECT q.id, q.title, q.created_at,
+               COALESCE(ROUND(AVG(r.percentage)::numeric, 1), 0) AS avg_success,
+               COUNT(r.id) AS attempts
+        FROM quizzes q
+        LEFT JOIN results r ON q.id = r.quiz_id
+        GROUP BY q.id, q.title, q.created_at
+        ORDER BY q.created_at DESC
+    """)
     quizzes = cur.fetchall()
     cur.close()
     conn.close()
+
+    # Převod času na CET a formátování
+    for q in quizzes:
+        if q["created_at"]:
+            utc_time = q["created_at"].replace(tzinfo=ZoneInfo("UTC"))
+            local_time = utc_time.astimezone(ZoneInfo("Europe/Prague"))
+            q["created_at"] = local_time.strftime("%Y-%m-%d %H:%M:%S")
+
     return jsonify(quizzes), 200
 
 @app.route("/get_quiz")
