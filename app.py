@@ -86,38 +86,12 @@ def create_quiz():
 def get_all_quizzes():
     conn = get_db_connection()
     cur = conn.cursor()
-
     cur.execute("SELECT id, title, created_at FROM quizzes ORDER BY created_at DESC")
     quizzes = cur.fetchall()
-
-    result = []
-    for q in quizzes:
-        quiz_id = q["id"]
-        title = q["title"]
-        created_at = q["created_at"]
-
-        # počet spuštění
-        cur.execute("SELECT COUNT(*) FROM results WHERE quiz_id = %s", (quiz_id,))
-        attempts = cur.fetchone()["count"]
-
-        # průměrná úspěšnost
-        cur.execute("SELECT AVG(percentage) FROM results WHERE quiz_id = %s", (quiz_id,))
-        avg_success = cur.fetchone()["avg"] or 0
-
-        # převedeme datum na YYYY-MM-DD
-        created_date = created_at.strftime("%Y-%m-%d") if created_at else ""
-
-        result.append({
-            "id": quiz_id,
-            "title": title,
-            "created_at": created_date,
-            "attempts": attempts,
-            "avg_success": round(avg_success, 2)
-        })
-
     cur.close()
     conn.close()
-    return jsonify(result), 200
+    return jsonify(quizzes), 200
+
 @app.route("/get_quiz")
 def get_quiz():
     quiz_id = request.args.get("id")
@@ -174,21 +148,27 @@ def submit_answers():
     for i, q in enumerate(questions):
         correct = q.get("correct")
         opts = q.get("options", [])
-        correct_text = None
 
+        correct_index = None
+        correct_text = None
         if isinstance(correct, int) and 0 <= correct < len(opts):
+            correct_index = correct
             correct_text = opts[correct]
-        elif isinstance(correct, str):
+        elif isinstance(correct, str) and correct in opts:
+            correct_index = opts.index(correct)
             correct_text = correct
 
         user_ans = answers.get(str(i)) or answers.get(i)
+        user_index = None
         user_text = None
         if isinstance(user_ans, int) and 0 <= user_ans < len(opts):
+            user_index = user_ans
             user_text = opts[user_ans]
-        elif isinstance(user_ans, str):
+        elif isinstance(user_ans, str) and user_ans in opts:
+            user_index = opts.index(user_ans)
             user_text = user_ans
 
-        is_correct = (user_text == correct_text)
+        is_correct = (user_index == correct_index)
         if is_correct:
             score += 1
 
@@ -197,7 +177,9 @@ def submit_answers():
             "question": q.get("question"),
             "options": opts,
             "correct": correct_text,
+            "correct_index": correct_index,
             "user_answer": user_text,
+            "user_index": user_index,
             "is_correct": is_correct
         })
 
