@@ -218,16 +218,18 @@ def submit_answers():
 
         correct_index = None
         correct_text = None
-
-        # 🔧 fix – podporujeme i float z DB
-        if isinstance(correct, (int, float)) and int(correct) == correct and 0 <= int(correct) < len(opts):
-            correct_index = int(correct)
-            correct_text = opts[correct_index]
+        if isinstance(correct, int) and 0 <= correct < len(opts):
+            correct_index = correct
+            correct_text = opts[correct]
         elif isinstance(correct, str) and correct in opts:
             correct_index = opts.index(correct)
             correct_text = correct
 
-        user_ans = answers.get(str(i)) or answers.get(i)
+        # --- FIX: explicitní kontrola kvůli hodnotě 0 ---
+        user_ans = answers.get(str(i))
+        if user_ans is None:
+            user_ans = answers.get(i)
+
         user_index = None
         user_text = None
         if isinstance(user_ans, int) and 0 <= user_ans < len(opts):
