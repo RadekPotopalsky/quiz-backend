@@ -69,13 +69,43 @@ def create_quiz():
     if not data or "title" not in data or "questions" not in data:
         return jsonify({"error": "Invalid format"}), 400
 
+    cleaned_questions = []
+    for q in data["questions"]:
+        question = q.get("question")
+        options = q.get("options", [])
+        correct = q.get("correct")
+        answer = q.get("answer")  # fallback pokud přijde špatný klíč
+
+        # --- validace options ---
+        if not isinstance(options, list) or len(options) != 4:
+            return jsonify({"error": f"Question '{question}' nemá přesně 4 možnosti."}), 400
+
+        # --- pokud přišel klíč answer místo correct ---
+        if correct is None and answer is not None:
+            if isinstance(answer, (int, float)) and 0 <= int(answer) < 4:
+                correct = int(answer)
+            elif isinstance(answer, str) and answer in options:
+                correct = options.index(answer)
+
+        # --- fallback validace správnosti ---
+        if not isinstance(correct, int) or not (0 <= correct < 4):
+            return jsonify({"error": f"Otázka '{question}' nemá validní správnou odpověď."}), 400
+
+        # --- čistá verze otázky ---
+        cleaned_questions.append({
+            "question": question,
+            "options": options,
+            "correct": correct
+        })
+
+    # --- uložení do DB ---
     quiz_id = datetime.now().strftime("%Y%m%d%H%M%S")
 
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO quizzes (id, title, questions) VALUES (%s, %s, %s)",
-        (quiz_id, data["title"], json.dumps(data["questions"]))
+        (quiz_id, data["title"], json.dumps(cleaned_questions))
     )
     conn.commit()
     cur.close()
@@ -188,9 +218,11 @@ def submit_answers():
 
         correct_index = None
         correct_text = None
-        if isinstance(correct, int) and 0 <= correct < len(opts):
-            correct_index = correct
-            correct_text = opts[correct]
+
+        # 🔧 fix – podporujeme i float z DB
+        if isinstance(correct, (int, float)) and int(correct) == correct and 0 <= int(correct) < len(opts):
+            correct_index = int(correct)
+            correct_text = opts[correct_index]
         elif isinstance(correct, str) and correct in opts:
             correct_index = opts.index(correct)
             correct_text = correct
