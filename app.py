@@ -1,10 +1,13 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from contextlib import closing
+from hmac import compare_digest
 import os
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
+from uuid import uuid4
 from zoneinfo import ZoneInfo  # používáme vestavěné
 
 app = Flask(__name__)
@@ -98,18 +101,58 @@ def create_quiz():
             "correct": correct
         })
 
-    # --- uložení do DB ---
     quiz_id = datetime.now().strftime("%Y%m%d%H%M%S")
+    return save_quiz(quiz_id, data["title"], cleaned_questions)
 
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO quizzes (id, title, questions) VALUES (%s, %s, %s)",
-        (quiz_id, data["title"], json.dumps(cleaned_questions))
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+
+@app.route("/create_plugin_quiz", methods=["POST"])
+def create_plugin_quiz():
+    token = os.environ.get("QUIZ_PLUGIN_WRITE_TOKEN")
+    if not token:
+        return jsonify({"error": "Plugin writes are not configured"}), 503
+
+    authorization = request.headers.get("Authorization", "")
+    if not compare_digest(authorization.encode("utf-8"), f"Bearer {token}".encode("utf-8")):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object"}), 400
+
+    title = data.get("title")
+    questions = data.get("questions")
+    if not isinstance(title, str) or not title.strip() or len(title) > 255:
+        return jsonify({"error": "Expected a nonempty title of at most 255 characters"}), 400
+    if not isinstance(questions, list) or not questions:
+        return jsonify({"error": "Expected a nonempty questions array"}), 400
+
+    cleaned_questions = []
+    for index, item in enumerate(questions, start=1):
+        if not isinstance(item, dict):
+            return jsonify({"error": f"Invalid question at position {index}"}), 400
+        question = item.get("question")
+        options = item.get("options")
+        correct = item.get("correct")
+        if (
+            not isinstance(question, str) or not question.strip()
+            or not isinstance(options, list) or len(options) != 4
+            or any(not isinstance(option, str) or not option.strip() for option in options)
+            or type(correct) is not int or not 0 <= correct <= 3
+        ):
+            return jsonify({"error": f"Invalid question at position {index}"}), 400
+        cleaned_questions.append({"question": question, "options": options, "correct": correct})
+
+    return save_quiz(uuid4().hex, title, cleaned_questions)
+
+
+def save_quiz(quiz_id, title, questions):
+    with closing(get_db_connection()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO quizzes (id, title, questions) VALUES (%s, %s, %s)",
+                (quiz_id, title, json.dumps(questions))
+            )
+        conn.commit()
 
     return jsonify({"message": "Quiz saved successfully", "id": quiz_id}), 200
 
