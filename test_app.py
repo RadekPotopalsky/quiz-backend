@@ -125,5 +125,37 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(sum(item["type"] == "input_image" for item in sent), 10)
 
 
+class AccountPolicyTests(unittest.TestCase):
+    def test_eight_character_bootstrap_password_creates_admin(self):
+        cursor = FakeCursor([])
+        cursor.execute = Mock()
+        connection = Mock()
+        connection.cursor.return_value = cursor
+        @contextmanager
+        def fake_connection():
+            yield connection
+        with patch.dict(os.environ, {"QUIZ_BOOTSTRAP_ADMIN_PASSWORD": "abcdefgh"}), \
+             patch.object(quiz_app, "connection", fake_connection), \
+             patch.object(quiz_app, "generate_password_hash", return_value="hashed"):
+            quiz_app.initialize_db()
+        self.assertTrue(any("INSERT INTO accounts" in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_tenth_failed_login_temporarily_locks_account(self):
+        account = {"id": 3, "username": "dite", "role": "student", "password_hash": "hash",
+                   "failed_attempts": 9, "is_locked": False, "lock_expired": False}
+        cursor = FakeCursor([account])
+        cursor.execute = Mock()
+        connection = Mock()
+        connection.cursor.return_value = cursor
+        @contextmanager
+        def fake_connection():
+            yield connection
+        with patch.object(quiz_app, "connection", fake_connection), \
+             patch.object(quiz_app, "check_password_hash", return_value=False):
+            response = quiz_app.app.test_client().post("/auth/login", json={"username": "dite", "password": "wrong"})
+        self.assertEqual(response.status_code, 429)
+        self.assertTrue(any("INTERVAL '15 minutes'" in call.args[0] for call in cursor.execute.call_args_list))
+
+
 if __name__ == "__main__":
     unittest.main()

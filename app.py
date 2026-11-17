@@ -58,7 +58,11 @@ def initialize_db():
             password_hash TEXT NOT NULL, role VARCHAR(10) NOT NULL
                 CHECK (role IN ('admin', 'student')),
             active BOOLEAN NOT NULL DEFAULT TRUE,
+            failed_attempts INT NOT NULL DEFAULT 0,
+            locked_until TIMESTAMPTZ,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS failed_attempts INT NOT NULL DEFAULT 0")
+        cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ")
         cur.execute("""ALTER TABLE results ADD COLUMN IF NOT EXISTS account_id
             INT REFERENCES accounts(id) ON DELETE SET NULL""")
         cur.execute("CREATE INDEX IF NOT EXISTS results_account_id_idx ON results(account_id)")
@@ -68,7 +72,7 @@ def initialize_db():
         if not cur.fetchone():
             username = os.getenv("QUIZ_BOOTSTRAP_ADMIN_USERNAME", "admin").strip()
             password = os.getenv("QUIZ_BOOTSTRAP_ADMIN_PASSWORD", "")
-            if username and len(password) >= 12:
+            if username and len(password) >= 8:
                 cur.execute("""INSERT INTO accounts(username, password_hash, role)
                     VALUES (%s, %s, 'admin') ON CONFLICT (username) DO NOTHING""",
                     (username, generate_password_hash(password)))
@@ -175,11 +179,27 @@ def login():
     if not isinstance(username, str) or not isinstance(password, str):
         return jsonify(error="Zadej jméno a heslo."), 400
     with connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id, username, role, password_hash FROM accounts WHERE username = %s AND active = TRUE",
-                    (username.strip(),))
+        cur.execute("""SELECT id, username, role, password_hash, failed_attempts,
+            locked_until > NOW() AS is_locked, locked_until <= NOW() AS lock_expired
+            FROM accounts WHERE username = %s AND active = TRUE FOR UPDATE""",
+            (username.strip(),))
         account = cur.fetchone()
-    if not account or not check_password_hash(account["password_hash"], password):
-        return jsonify(error="Nesprávné jméno nebo heslo."), 401
+        if not account:
+            return jsonify(error="Nesprávné jméno nebo heslo."), 401
+        if account["is_locked"]:
+            return jsonify(error="Příliš mnoho chybných pokusů. Zkus to za 15 minut."), 429
+        if account["lock_expired"]:
+            cur.execute("UPDATE accounts SET failed_attempts = 0, locked_until = NULL WHERE id = %s", (account["id"],))
+            account["failed_attempts"] = 0
+        if not check_password_hash(account["password_hash"], password):
+            attempts = account["failed_attempts"] + 1
+            if attempts >= 10:
+                cur.execute("""UPDATE accounts SET failed_attempts = 0,
+                    locked_until = NOW() + INTERVAL '15 minutes' WHERE id = %s""", (account["id"],))
+                return jsonify(error="Příliš mnoho chybných pokusů. Zkus to za 15 minut."), 429
+            cur.execute("UPDATE accounts SET failed_attempts = %s WHERE id = %s", (attempts, account["id"]))
+            return jsonify(error="Nesprávné jméno nebo heslo."), 401
+        cur.execute("UPDATE accounts SET failed_attempts = 0, locked_until = NULL WHERE id = %s", (account["id"],))
     return jsonify(token=signer().dumps(account["id"]),
                    account={key: account[key] for key in ("id", "username", "role")})
 
@@ -204,8 +224,8 @@ def create_account():
     data = request.get_json(silent=True) or {}
     username, password = data.get("username"), data.get("password")
     if (not isinstance(username, str) or not 2 <= len(username.strip()) <= 100
-            or not isinstance(password, str) or len(password) < 12):
-        return jsonify(error="Jméno musí mít aspoň 2 a heslo aspoň 12 znaků."), 400
+            or not isinstance(password, str) or len(password) < 4):
+        return jsonify(error="Jméno musí mít aspoň 2 a heslo aspoň 4 znaky."), 400
     try:
         with connection() as conn, conn.cursor() as cur:
             cur.execute("""INSERT INTO accounts(username, password_hash, role)
@@ -221,13 +241,18 @@ def create_account():
 def change_password(account_id):
     data = request.get_json(silent=True) or {}
     password = data.get("password")
-    if not isinstance(password, str) or len(password) < 12:
-        return jsonify(error="Heslo musí mít aspoň 12 znaků."), 400
+    if not isinstance(password, str):
+        return jsonify(error="Zadej nové heslo."), 400
     with connection() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE accounts SET password_hash = %s WHERE id = %s RETURNING id",
-                    (generate_password_hash(password), account_id))
-        if not cur.fetchone():
+        cur.execute("SELECT role FROM accounts WHERE id = %s FOR UPDATE", (account_id,))
+        account = cur.fetchone()
+        if not account:
             return jsonify(error="Účet nebyl nalezen."), 404
+        minimum = 8 if account["role"] == "admin" else 4
+        if len(password) < minimum:
+            return jsonify(error=f"Heslo musí mít alespoň {minimum} znaků."), 400
+        cur.execute("""UPDATE accounts SET password_hash = %s, failed_attempts = 0,
+            locked_until = NULL WHERE id = %s""", (generate_password_hash(password), account_id))
     return jsonify(message="Heslo bylo změněno.")
 
 

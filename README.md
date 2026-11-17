@@ -14,7 +14,7 @@ Ve službě `quiz-backend` → **Environment** nastavte:
 | `DATABASE_URL` | Stávající spojení do Neon; ponechat beze změny. |
 | `QUIZ_SESSION_SECRET` | Nový náhodný řetězec alespoň 32 znaků pro přihlašovací relace. |
 | `QUIZ_BOOTSTRAP_ADMIN_USERNAME` | Přihlašovací jméno prvního administrátora. |
-| `QUIZ_BOOTSTRAP_ADMIN_PASSWORD` | Nové heslo prvního administrátora, alespoň 12 znaků. Po prvním úspěšném přihlášení lze proměnnou odstranit. |
+| `QUIZ_BOOTSTRAP_ADMIN_PASSWORD` | Heslo prvního administrátora, alespoň 8 znaků (12 nebo více doporučeno). Po prvním úspěšném přihlášení lze proměnnou odstranit. |
 | `OPENAI_API_KEY` | Samostatný OpenAI API klíč pro tuto aplikaci. Nikdy ho nevkládat do Netlify ani do Reactu. |
 | `FRONTEND_ORIGINS` | Volitelné při změně webové adresy. Výchozí povolené adresy jsou `https://unique-truffle-80425d.netlify.app` a `http://localhost:3000`. Více adres oddělit čárkou. |
 
@@ -68,6 +68,9 @@ až po odevzdání.
 | `POST /admin/accounts` | admin | `{"username":"...","password":"..."}` → nový žák. |
 | `POST /admin/accounts/<id>/password` | admin | `{"password":"..."}` → nové heslo. |
 | `POST /create_plugin_quiz` | starý token | Dočasná kompatibilita se starým pluginem; token `QUIZ_PLUGIN_WRITE_TOKEN`. |
+
+Žákovské účty přijímají hesla od 4 znaků, administrátorský účet od 8.
+Po 10 chybných pokusech se účet na 15 minut zablokuje.
 
 `questions` má tvar:
 
