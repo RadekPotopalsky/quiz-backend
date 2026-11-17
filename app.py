@@ -63,6 +63,8 @@ def initialize_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS failed_attempts INT NOT NULL DEFAULT 0")
         cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ")
+        cur.execute("""ALTER TABLE accounts ADD COLUMN IF NOT EXISTS default_audience
+            VARCHAR(100) NOT NULL DEFAULT '6. třída ZŠ'""")
         cur.execute("""ALTER TABLE results ADD COLUMN IF NOT EXISTS account_id
             INT REFERENCES accounts(id) ON DELETE SET NULL""")
         cur.execute("CREATE INDEX IF NOT EXISTS results_account_id_idx ON results(account_id)")
@@ -216,6 +218,27 @@ def accounts():
     with connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT id, username, role, active, created_at FROM accounts ORDER BY id")
         return jsonify(cur.fetchall())
+
+
+@app.get("/admin/preferences")
+@authenticated("admin")
+def get_preferences():
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT default_audience FROM accounts WHERE id = %s", (g.account["id"],))
+        return jsonify(cur.fetchone())
+
+
+@app.put("/admin/preferences")
+@authenticated("admin")
+def save_preferences():
+    data = request.get_json(silent=True) or {}
+    audience = data.get("default_audience")
+    if not isinstance(audience, str) or not 2 <= len(audience.strip()) <= 100:
+        return jsonify(error="Výchozí cílová skupina musí mít 2 až 100 znaků."), 400
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE accounts SET default_audience = %s WHERE id = %s",
+                    (audience.strip(), g.account["id"]))
+    return jsonify(default_audience=audience.strip())
 
 
 @app.post("/admin/accounts")

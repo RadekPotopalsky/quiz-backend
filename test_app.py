@@ -44,7 +44,7 @@ class QuizRulesTests(unittest.TestCase):
 
     def test_private_endpoints_require_login(self):
         client = quiz_app.app.test_client()
-        for path in ("/get_quiz?id=quiz", "/get_results", "/get_result?id=1", "/admin/accounts"):
+        for path in ("/get_quiz?id=quiz", "/get_results", "/get_result?id=1", "/admin/accounts", "/admin/preferences"):
             self.assertEqual(client.get(path).status_code, 401)
         self.assertEqual(client.post("/create_quiz", json={}).status_code, 401)
         self.assertEqual(client.delete("/delete_quiz?id=quiz").status_code, 401)
@@ -139,6 +139,25 @@ class AccountPolicyTests(unittest.TestCase):
              patch.object(quiz_app, "generate_password_hash", return_value="hashed"):
             quiz_app.initialize_db()
         self.assertTrue(any("INSERT INTO accounts" in call.args[0] for call in cursor.execute.call_args_list))
+        self.assertTrue(any("ADD COLUMN IF NOT EXISTS default_audience" in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_admin_can_save_default_audience_for_their_account(self):
+        cursor = FakeCursor([{"id": 3, "username": "admin", "role": "admin"}])
+        cursor.execute = Mock()
+        connection = Mock()
+        connection.cursor.return_value = cursor
+        @contextmanager
+        def fake_connection():
+            yield connection
+        with patch.object(quiz_app, "connection", fake_connection), \
+             patch.object(quiz_app, "signer", return_value=Mock(loads=lambda *args, **kwargs: 3)):
+            response = quiz_app.app.test_client().put("/admin/preferences",
+                json={"default_audience": "7. třída ZŠ"}, headers={"Authorization": "Bearer signed"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["default_audience"], "7. třída ZŠ")
+        self.assertTrue(any("UPDATE accounts SET default_audience" in call.args[0]
+                            and call.args[1] == ("7. třída ZŠ", 3)
+                            for call in cursor.execute.call_args_list))
 
     def test_tenth_failed_login_temporarily_locks_account(self):
         account = {"id": 3, "username": "dite", "role": "student", "password_hash": "hash",

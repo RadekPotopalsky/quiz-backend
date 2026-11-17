@@ -62,6 +62,8 @@ až po odevzdání.
 | `GET /get_results_by_quiz?quiz_id=...` | přihlášený | Historie pro jeden kvíz se stejným omezením. |
 | `GET /get_result?id=...` | přihlášený | Detail vlastního výsledku nebo libovolného pro admina. |
 | `POST /admin/generate-quiz` | admin | `multipart/form-data`: `images` (1–10), `audience`, `topic`, `question_count` (1–30). Vrátí návrh, neukládá ho. |
+| `GET /admin/preferences` | admin | Vrátí uloženou výchozí cílovou skupinu pro nové kvízy. |
+| `PUT /admin/preferences` | admin | `{"default_audience":"6. třída ZŠ"}` uloží výchozí cílovou skupinu pro tento účet na všech zařízeních. |
 | `POST /create_quiz` | admin | Návrh jako JSON → uložené ID. Každá otázka musí mít citaci a číslo fotografie. |
 | `DELETE /delete_quiz?id=...` | admin | Smaže kvíz včetně výsledků. |
 | `GET /admin/accounts` | admin | Seznam účtů. |
